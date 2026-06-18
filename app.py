@@ -4,6 +4,7 @@ import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
 from datetime import datetime, timedelta
+from functools import partial
 from data_loader import (
     load_trading_data,
     load_weather_data,
@@ -92,8 +93,8 @@ _tab_config = [
 _tab_titles = [t for t, _ in _tab_config]
 _tab_keys = [k for _, k in _tab_config]
 
-if 'active_tab_idx' not in st.session_state:
-    st.session_state['active_tab_idx'] = 0
+if 'active_tab' not in st.session_state:
+    st.session_state['active_tab'] = _tab_titles[0]
 if 'weather_focus_date' not in st.session_state:
     st.session_state['weather_focus_date'] = None
 if 'weather_focus_market' not in st.session_state:
@@ -106,12 +107,15 @@ def _jump_to_price_tab(focus_date, focus_market, window_days=14):
     st.session_state['weather_focus_date'] = pd.Timestamp(focus_date)
     st.session_state['weather_focus_market'] = focus_market
     st.session_state['weather_focus_window'] = window_days
-    st.session_state['active_tab_idx'] = 0
+    st.session_state['active_tab'] = _tab_titles[0]
 
 
 _default_market_list = ['全部'] + sorted(trading_df['market'].unique())
 _default_sd = trading_df['date'].max() - timedelta(days=90)
 _default_ed = trading_df['date'].max()
+
+_min_date = trading_df['date'].min()
+_max_date = trading_df['date'].max()
 
 _focus_msg = None
 _effective_market = '全部'
@@ -120,8 +124,8 @@ _effective_ed = _default_ed
 if st.session_state['weather_focus_date'] is not None:
     _fd = st.session_state['weather_focus_date']
     _win = st.session_state['weather_focus_window']
-    _effective_sd = _fd - timedelta(days=_win)
-    _effective_ed = _fd + timedelta(days=_win)
+    _effective_sd = max(_fd - timedelta(days=_win), _min_date)
+    _effective_ed = min(_fd + timedelta(days=_win), _max_date)
     _market = st.session_state['weather_focus_market']
     if _market and _market in _default_market_list:
         _effective_market = _market
@@ -216,21 +220,14 @@ if _focus_msg:
 st.markdown("---")
 
 
-def _on_tab_change():
-    st.session_state['active_tab_idx'] = _tab_titles.index(st.session_state['_tab_radio'])
-
-
-_tab_selected_idx = st.session_state.get('active_tab_idx', 0)
 st.radio(
     "功能模块",
     options=_tab_titles,
-    index=_tab_selected_idx,
+    key='active_tab',
     horizontal=True,
-    key='_tab_radio',
-    on_change=_on_tab_change,
     label_visibility='collapsed'
 )
-active_idx = st.session_state['active_tab_idx']
+active_idx = _tab_titles.index(st.session_state['active_tab'])
 
 
 if active_idx == 0:
@@ -880,14 +877,13 @@ elif active_idx == 3:
                     </div>
                     """, unsafe_allow_html=True)
                     btn_key = f"jump_{row['date'].strftime('%Y%m%d')}_{idx}"
-                    if st.button(
+                    st.button(
                         f"📈 跳转查看价格影响",
                         key=btn_key,
                         type="secondary",
                         use_container_width=True,
-                    ):
-                        _jump_to_price_tab(row['date'], _market, window_days=14)
-                        st.rerun()
+                        on_click=partial(_jump_to_price_tab, row['date'], _market, 14)
+                    )
         else:
             st.success("✅ 近期无灾害性天气预警")
 
