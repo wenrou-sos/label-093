@@ -13,6 +13,8 @@ from data_loader import (
     detect_price_anomalies,
     calculate_kline_data,
     get_season_ranges,
+    get_season_ranges_for_years,
+    get_years_in_range,
     compare_mingqian_yuqian,
     get_weather_warnings,
     get_market_volume_distribution,
@@ -176,7 +178,10 @@ with tab1:
     col_kline, col_info = st.columns([3, 1])
 
     with col_kline:
-        kline_df = calculate_kline_data(trading_filtered, selected_variety, days=days)
+        kline_df = calculate_kline_data(
+            trading_filtered, selected_variety,
+            days=days, start_date=start_date, end_date=end_date
+        )
         if len(kline_df) > 0:
             fig_kline = go.Figure()
 
@@ -219,25 +224,34 @@ with tab1:
                         ))
 
             current_year = trading_df['date'].max().year
-            season_ranges = get_season_ranges()
-            for season, info in season_ranges.items():
-                try:
-                    season_start = datetime(current_year, info['start_month'], info['start_day'])
-                    season_end = datetime(current_year, info['end_month'], info['end_day'])
-                    if season_end >= kline_df['date'].min() and season_start <= kline_df['date'].max():
-                        fig_kline.add_vrect(
-                            x0=season_start,
-                            x1=season_end,
-                            fillcolor=info['color'],
-                            opacity=0.1,
-                            layer="below",
-                            line_width=0,
-                            annotation_text=season,
-                            annotation_position="top left",
-                            annotation_font_color=info['color']
-                        )
-                except (ValueError, TypeError):
-                    pass
+            if len(kline_df) > 0:
+                kline_min_date = kline_df['date'].min()
+                kline_max_date = kline_df['date'].max()
+                years_in_range = get_years_in_range(kline_min_date, kline_max_date)
+                all_seasons = get_season_ranges_for_years(years_in_range)
+
+                for season_info in all_seasons:
+                    try:
+                        season_start = season_info['start']
+                        season_end = season_info['end']
+                        season_name = season_info['season']
+                        year_label = season_info['year']
+                        if season_end >= kline_min_date and season_start <= kline_max_date:
+                            label = f"{year_label} {season_name}" if len(years_in_range) > 1 else season_name
+                            fig_kline.add_vrect(
+                                x0=season_start,
+                                x1=season_end,
+                                fillcolor=season_info['color'],
+                                opacity=0.1,
+                                layer="below",
+                                line_width=0,
+                                annotation_text=label,
+                                annotation_position="top left",
+                                annotation_font_color=season_info['color'],
+                                annotation_font_size=10
+                            )
+                    except (ValueError, TypeError):
+                        pass
 
             fig_kline.update_layout(
                 title=f'{selected_variety} 价格K线图 ({selected_period})',
@@ -269,7 +283,10 @@ with tab1:
             st.success("✅ 近期无异常价格波动")
 
         st.markdown("---")
-        trend_30 = get_price_trend(trading_filtered, selected_variety, days=30)
+        trend_30 = get_price_trend(
+            trading_filtered, selected_variety, days=30,
+            start_date=start_date, end_date=end_date
+        )
         if len(trend_30) >= 2:
             price_change = (trend_30.iloc[-1]['price_yuan_per_jin'] - trend_30.iloc[0]['price_yuan_per_jin']) / trend_30.iloc[0]['price_yuan_per_jin'] * 100
             st.metric(
@@ -289,7 +306,10 @@ with tab1:
     if compare_varieties:
         fig_compare = go.Figure()
         for variety in compare_varieties:
-            trend = get_price_trend(trading_filtered, variety, days=days)
+            trend = get_price_trend(
+                trading_filtered, variety, days=days,
+                start_date=start_date, end_date=end_date
+            )
             if len(trend) > 0:
                 fig_compare.add_trace(go.Scatter(
                     x=trend['date'],
@@ -387,32 +407,48 @@ with tab2:
     st.markdown("---")
     st.subheader("茶叶上市时间轴")
     season_ranges = get_season_ranges()
-    current_year = trading_df['date'].max().year
+    timeline_min = start_date
+    timeline_max = end_date
+    timeline_years = get_years_in_range(timeline_min, timeline_max)
+    timeline_all_seasons = get_season_ranges_for_years(timeline_years)
 
     fig_timeline = go.Figure()
-    for season, info in season_ranges.items():
+    for season_info in timeline_all_seasons:
         try:
-            start_dt = datetime(current_year, info['start_month'], info['start_day'])
-            end_dt = datetime(current_year, info['end_month'], info['end_day'])
-            fig_timeline.add_trace(go.Scatter(
-                x=[start_dt, end_dt],
-                y=[season, season],
-                mode='lines',
-                line=dict(color=info['color'], width=15),
-                name=season,
-                hovertemplate=f"{season}: {start_dt.strftime('%m月%d日')} - {end_dt.strftime('%m月%d日')}"
-            ))
+            start_dt = season_info['start']
+            end_dt = season_info['end']
+            year = season_info['year']
+            season_name = season_info['season']
+
+            display_start = max(start_dt, pd.Timestamp(timeline_min))
+            display_end = min(end_dt, pd.Timestamp(timeline_max))
+
+            if display_end >= display_start:
+                label = f"{year}年{season_name}" if len(timeline_years) > 1 else season_name
+                y_label = f"{year} {season_name}" if len(timeline_years) > 1 else season_name
+                fig_timeline.add_trace(go.Scatter(
+                    x=[display_start, display_end],
+                    y=[y_label, y_label],
+                    mode='lines',
+                    line=dict(color=season_info['color'], width=15),
+                    name=label,
+                    hovertemplate=f"{year}年{season_name}: {start_dt.strftime('%m月%d日')} - {end_dt.strftime('%m月%d日')}",
+                    showlegend=(len(timeline_years) <= 1)
+                ))
         except (ValueError, TypeError):
             pass
 
+    xaxis_range = [pd.Timestamp(timeline_min) - pd.Timedelta(days=3), pd.Timestamp(timeline_max) + pd.Timedelta(days=3)]
+
     fig_timeline.update_layout(
-        title='春茶/夏茶/秋茶上市时间区间',
+        title=f'春茶/夏茶/秋茶上市时间区间 ({timeline_min.strftime("%Y-%m-%d")} 至 {timeline_max.strftime("%Y-%m-%d")})',
         xaxis_title='时间',
+        xaxis_range=xaxis_range,
         yaxis_title='茶季',
-        height=300,
+        height=max(300, 50 * len(timeline_years) * 3),
         template='plotly_white',
         showlegend=True,
-        yaxis=dict(showgrid=False),
+        yaxis=dict(showgrid=False, autorange='reversed' if len(timeline_all_seasons) > 6 else None),
         xaxis=dict(showgrid=True, gridwidth=1, gridcolor='#f3f4f6')
     )
     st.plotly_chart(fig_timeline, width='stretch')
