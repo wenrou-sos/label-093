@@ -71,11 +71,32 @@ def calculate_kline_data(df, variety, days=90):
     kline_data['date'] = trend['date']
     kline_data['open'] = trend['price_yuan_per_jin'].shift(1)
     kline_data['close'] = trend['price_yuan_per_jin']
-    kline_data['high'] = trend['price_yuan_per_jin'] * (1 + np.random.uniform(0, 0.03, len(trend)))
-    kline_data['low'] = trend['price_yuan_per_jin'] * (1 - np.random.uniform(0, 0.03, len(trend)))
+
+    def seeded_random(seed_val, low, high, idx):
+        rng = np.random.default_rng(seed=seed_val)
+        return rng.uniform(low, high)
+
+    kline_data['high'] = trend.apply(
+        lambda row: row['price_yuan_per_jin'] * (1 + seeded_random(
+            int(pd.Timestamp(row['date']).timestamp() * 1000) + hash(variety) % 10000,
+            0.005, 0.03, 0
+        )),
+        axis=1
+    )
+    kline_data['low'] = trend.apply(
+        lambda row: row['price_yuan_per_jin'] * (1 - seeded_random(
+            int(pd.Timestamp(row['date']).timestamp() * 1000) + hash(variety) % 10000 + 999,
+            0.005, 0.03, 0
+        )),
+        axis=1
+    )
     kline_data['volume'] = trend['volume_ton']
 
-    kline_data.loc[0, 'open'] = kline_data.loc[0, 'close'] * (1 + np.random.uniform(-0.02, 0.02))
+    if len(kline_data) > 0:
+        first_seed = int(pd.Timestamp(kline_data.loc[0, 'date']).timestamp() * 1000) + hash(variety) % 10000 + 555
+        rng_first = np.random.default_rng(seed=first_seed)
+        kline_data.loc[0, 'open'] = kline_data.loc[0, 'close'] * (1 + rng_first.uniform(-0.02, 0.02))
+
     return kline_data
 
 

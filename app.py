@@ -176,7 +176,7 @@ with tab1:
     col_kline, col_info = st.columns([3, 1])
 
     with col_kline:
-        kline_df = calculate_kline_data(trading_df, selected_variety, days=days)
+        kline_df = calculate_kline_data(trading_filtered, selected_variety, days=days)
         if len(kline_df) > 0:
             fig_kline = go.Figure()
 
@@ -191,7 +191,7 @@ with tab1:
                 decreasing_line_color='#ef4444'
             ))
 
-            anomalies = detect_price_anomalies(trading_df, selected_variety)
+            anomalies = detect_price_anomalies(trading_filtered, selected_variety)
             if len(anomalies) > 0:
                 kline_start = kline_df['date'].min()
                 kline_end = kline_df['date'].max()
@@ -253,7 +253,7 @@ with tab1:
 
     with col_info:
         st.subheader("异常波动预警")
-        anomalies = detect_price_anomalies(trading_df, selected_variety)
+        anomalies = detect_price_anomalies(trading_filtered, selected_variety)
         if len(anomalies) > 0:
             latest = anomalies.sort_values('date', ascending=False).head(5)
             for _, row in latest.iterrows():
@@ -269,7 +269,7 @@ with tab1:
             st.success("✅ 近期无异常价格波动")
 
         st.markdown("---")
-        trend_30 = get_price_trend(trading_df, selected_variety, days=30)
+        trend_30 = get_price_trend(trading_filtered, selected_variety, days=30)
         if len(trend_30) >= 2:
             price_change = (trend_30.iloc[-1]['price_yuan_per_jin'] - trend_30.iloc[0]['price_yuan_per_jin']) / trend_30.iloc[0]['price_yuan_per_jin'] * 100
             st.metric(
@@ -289,7 +289,7 @@ with tab1:
     if compare_varieties:
         fig_compare = go.Figure()
         for variety in compare_varieties:
-            trend = get_price_trend(trading_df, variety, days=days)
+            trend = get_price_trend(trading_filtered, variety, days=days)
             if len(trend) > 0:
                 fig_compare.add_trace(go.Scatter(
                     x=trend['date'],
@@ -316,7 +316,7 @@ with tab2:
     col_pie, col_bar = st.columns(2)
 
     with col_pie:
-        volume_dist = get_market_volume_distribution(trading_df, start_date, end_date)
+        volume_dist = get_market_volume_distribution(trading_filtered, start_date, end_date)
         colors = ['#92400e', '#b45309', '#d97706', '#f59e0b', '#fbbf24']
         fig_pie = go.Figure(data=[go.Pie(
             labels=volume_dist['market'],
@@ -433,7 +433,7 @@ with tab3:
     else:
         variety_filter = compare_variety
 
-    comparison = compare_mingqian_yuqian(trading_df, variety_filter)
+    comparison = compare_mingqian_yuqian(trading_filtered, variety_filter)
 
     col1, col2, col3 = st.columns(3)
 
@@ -521,8 +521,9 @@ with tab3:
     st.subheader("各品种明前/雨前价格差异对比")
 
     variety_comparisons = []
-    for v in all_varieties:
-        comp = compare_mingqian_yuqian(trading_df, v)
+    filtered_varieties = sorted(trading_filtered['variety'].unique())
+    for v in filtered_varieties:
+        comp = compare_mingqian_yuqian(trading_filtered, v)
         if comp['yuqian_avg_price'] > 0 and comp['mingqian_avg_price'] > 0:
             variety_comparisons.append({
                 'variety': v,
