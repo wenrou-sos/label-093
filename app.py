@@ -81,6 +81,24 @@ def load_data():
 
 trading_df, weather_df = load_data()
 
+
+if 'active_tab' not in st.session_state:
+    st.session_state['active_tab'] = 0
+if 'weather_focus_date' not in st.session_state:
+    st.session_state['weather_focus_date'] = None
+if 'weather_focus_market' not in st.session_state:
+    st.session_state['weather_focus_market'] = None
+if 'weather_focus_window' not in st.session_state:
+    st.session_state['weather_focus_window'] = 14
+
+
+def _jump_to_price_tab(focus_date, focus_market, window_days=14):
+    st.session_state['weather_focus_date'] = pd.Timestamp(focus_date)
+    st.session_state['weather_focus_market'] = focus_market
+    st.session_state['weather_focus_window'] = window_days
+    st.session_state['active_tab'] = 0
+
+
 with st.sidebar:
     st.title("🍵 茶叶市场分析")
     st.markdown("---")
@@ -104,6 +122,20 @@ with st.sidebar:
 
     st.markdown("---")
     st.caption(f"数据更新时间: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+
+_focus_msg = None
+if st.session_state['weather_focus_date'] is not None:
+    _fd = st.session_state['weather_focus_date']
+    _win = st.session_state['weather_focus_window']
+    _sd = _fd - timedelta(days=_win)
+    _ed = _fd + timedelta(days=_win)
+    _market = st.session_state['weather_focus_market']
+    if _market and _market != '全部':
+        selected_market = _market if _market in all_markets else '全部'
+    date_range = (_sd.date(), _ed.date())
+    _focus_msg = f"🔍 天气联动视角：围绕 {_fd.strftime('%Y-%m-%d')} 前后 {_win} 天" \
+                 f"（{_sd.strftime('%m-%d')} ~ {_ed.strftime('%m-%d')}）" \
+                 f"{' · 产区: ' + _market if _market and _market != '全部' else ''}"
 
 if selected_market != '全部':
     trading_filtered = trading_df[trading_df['market'] == selected_market]
@@ -153,15 +185,23 @@ with col4:
         value=f"{num_markets} 个"
     )
 
+if _focus_msg:
+    st.info(_focus_msg + " · 调整侧边栏筛选可退出联动视角")
+    if st.button("🔙 清除联动视角", type="secondary"):
+        st.session_state['weather_focus_date'] = None
+        st.session_state['weather_focus_market'] = None
+        st.rerun()
+
 st.markdown("---")
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+_tab_titles = [
     "📈 价格趋势分析",
     "🏪 市场分布",
     "🌸 明前/雨前对比",
     "🌤️ 天气影响分析",
     "📊 数据总览"
-])
+]
+tab1, tab2, tab3, tab4, tab5 = st.tabs(_tab_titles)
 
 with tab1:
     st.header(f"{selected_variety} - 价格趋势分析")
@@ -242,7 +282,7 @@ with tab1:
                                 x0=season_start,
                                 x1=season_end,
                                 fillcolor=season_info['color'],
-                                opacity=0.1,
+                                opacity=0.08,
                                 layer="below",
                                 line_width=0,
                                 annotation_text=label,
@@ -252,6 +292,86 @@ with tab1:
                             )
                     except (ValueError, TypeError):
                         pass
+
+            warning_styles = {
+                '霜冻':    {'color': '#2563eb', 'dash': 'dot',   'symbol': '❄️', 'label': '霜冻'},
+                '洪涝':    {'color': '#0891b2', 'dash': 'dash',  'symbol': '🌊', 'label': '暴雨洪涝'},
+                '高温':    {'color': '#dc2626', 'dash': 'solid', 'symbol': '🔥', 'label': '高温'},
+                '低温冻害': {'color': '#7c3aed', 'dash': 'dashdot','symbol': '🧊', 'label': '低温冻害'},
+            }
+
+            kline_weather = weather_df.copy()
+            if selected_market != '全部':
+                kline_weather = kline_weather[kline_weather['location'] == selected_market]
+            kline_weather_range = kline_weather[
+                (kline_weather['date'] >= start_date) &
+                (kline_weather['date'] <= end_date) &
+                (kline_weather['has_warning'] == True)
+            ]
+            if len(kline_weather_range) > 0:
+                grouped_warnings = kline_weather_range.groupby('date').agg({
+                    'warning_type': lambda x: ';'.join(sorted(set([w for w in x if w]))),
+                    'location': lambda x: '、'.join(sorted(set(x))),
+                    'temperature': 'mean'
+                }).reset_index()
+                price_range = (kline_df['high'].max(), kline_df['low'].min())
+                price_span = price_range[0] - price_range[1]
+
+                for _, wrow in grouped_warnings.iterrows():
+                    wdate = pd.Timestamp(wrow['date'])
+                    if not (kline_min_date <= wdate <= kline_max_date):
+                        continue
+                    wtypes = [t for t in wrow['warning_type'].split(';') if t]
+                    if not wtypes:
+                        continue
+                    primary = wtypes[0]
+                    style = warning_styles.get(primary, warning_styles['高温'])
+                    marker_y = price_range[0] + price_span * 0.03
+
+                    fig_kline.add_vline(
+                        x=wdate,
+                        line_width=3,
+                        line_dash=style['dash'],
+                        line_color=style['color'],
+                        opacity=0.7,
+                    )
+                    fig_kline.add_trace(go.Scatter(
+                        x=[wdate],
+                        y=[marker_y],
+                        mode='markers+text',
+                        text=[style['symbol']],
+                        textposition="top center",
+                        textfont=dict(size=16),
+                        marker=dict(
+                            symbol='diamond-wide',
+                            size=14,
+                            color=style['color'],
+                            line=dict(width=2, color='white')
+                        ),
+                        name=f"天气-{style['label']}",
+                        hovertemplate=(
+                            f"日期: {wdate.strftime('%Y-%m-%d')}<br>"
+                            f"天气预警: {','.join([warning_styles.get(t, {}).get('label', t) for t in wtypes])}<br>"
+                            f"产区: {wrow['location']}<br>"
+                            f"气温: {wrow['temperature']:.1f}°C"
+                        ),
+                        showlegend=False
+                    ))
+
+            if st.session_state['weather_focus_date'] is not None:
+                fd = pd.Timestamp(st.session_state['weather_focus_date'])
+                if kline_min_date <= fd <= kline_max_date:
+                    fig_kline.add_vline(
+                        x=fd,
+                        line_width=4,
+                        line_dash='longdash',
+                        line_color='#f59e0b',
+                        opacity=0.9,
+                        annotation_text='🎯 天气焦点',
+                        annotation_position='top right',
+                        annotation_font_color='#b45309',
+                        annotation_font_size=11
+                    )
 
             fig_kline.update_layout(
                 title=f'{selected_variety} 价格K线图 ({selected_period})',
@@ -705,9 +825,10 @@ with tab4:
 
     with col_alerts:
         st.subheader("近期天气预警")
+        st.caption("点击跳转 → 查看对应日期的价格波动")
         recent_warnings = warnings.sort_values('date', ascending=False).head(10)
         if len(recent_warnings) > 0:
-            for _, row in recent_warnings.iterrows():
+            for idx, (_, row) in enumerate(recent_warnings.iterrows()):
                 icons_map = {
                     '霜冻': '🧊',
                     '洪涝': '🌊',
@@ -716,16 +837,196 @@ with tab4:
                 }
                 warn_types = row['warning_type'].split(';') if row['warning_type'] else []
                 icon_str = ''.join([icons_map.get(w, '⚠️') for w in warn_types])
-                st.markdown(f"""
-                <div class="weather-alert">
-                    <strong>{icon_str} {row['date'].strftime('%Y-%m-%d')}</strong><br>
-                    产区: {row['location']}<br>
-                    预警: {row['warning_type']}<br>
-                    气温: {row['temperature']}°C | 降雨: {row['rainfall_mm']}mm
-                </div>
-                """, unsafe_allow_html=True)
+
+                _market = row['location'] if row['location'] in ['安溪', '武夷山', '新昌', '勐海', '横县'] else None
+
+                with st.container():
+                    st.markdown(f"""
+                    <div class="weather-alert" style="margin-bottom:4px;">
+                        <strong>{icon_str} {row['date'].strftime('%Y-%m-%d')}</strong><br>
+                        <small>产区: {row['location']}</small><br>
+                        <small>预警: {row['warning_type']}</small><br>
+                        <small>🌡️ {row['temperature']}°C | 💧 {row['rainfall_mm']}mm</small>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    btn_key = f"jump_{row['date'].strftime('%Y%m%d')}_{idx}"
+                    if st.button(
+                        f"📈 跳转查看价格影响",
+                        key=btn_key,
+                        type="secondary",
+                        use_container_width=True,
+                    ):
+                        _jump_to_price_tab(row['date'], _market, window_days=14)
+                        st.rerun()
         else:
             st.success("✅ 近期无灾害性天气预警")
+
+    st.markdown("---")
+    st.subheader("🌡️ 气温 vs 茶叶价格 相关性分析")
+    corr_col1, corr_col2 = st.columns([2, 1])
+
+    with corr_col1:
+        _loc_for_corr = '全部'
+        if weather_location != '全部':
+            _loc_for_corr = weather_location
+
+        if _loc_for_corr == '全部':
+            _markets_for_corr = ['安溪', '武夷山', '新昌', '勐海', '横县']
+        else:
+            _markets_for_corr = [_loc_for_corr] if _loc_for_corr in ['安溪', '武夷山', '新昌', '勐海', '横县'] else []
+
+        _tr_for_corr = trading_df[trading_df['market'].isin(_markets_for_corr)]
+        _tr_for_corr = _tr_for_corr[
+            (_tr_for_corr['variety'] == selected_variety) &
+            (_tr_for_corr['date'] >= start_date) &
+            (_tr_for_corr['date'] <= end_date)
+        ]
+
+        if len(_tr_for_corr) > 0:
+            _daily_price = _tr_for_corr.groupby('date').agg({
+                'price_yuan_per_jin': 'mean',
+                'volume_ton': 'sum'
+            }).reset_index()
+
+            _w_for_corr = weather_df.copy()
+            if _loc_for_corr != '全部':
+                _w_for_corr = _w_for_corr[_w_for_corr['location'] == _loc_for_corr]
+            _daily_weather = _w_for_corr.groupby('date').agg({
+                'temperature': 'mean',
+                'rainfall_mm': 'sum'
+            }).reset_index()
+
+            _merged = pd.merge(_daily_price, _daily_weather, on='date', how='inner')
+
+            if len(_merged) >= 5:
+                _merged['size_scaled'] = (_merged['volume_ton'] - _merged['volume_ton'].min()) / (
+                    (_merged['volume_ton'].max() - _merged['volume_ton'].min()) + 1e-6
+                ) * 30 + 8
+                _merged['warning'] = _merged['rainfall_mm'].apply(
+                    lambda x: '大雨 (>50mm)' if x >= 50 else ('中雨' if x >= 10 else '少雨')
+                ) + _merged['temperature'].apply(
+                    lambda x: ' | 高温 (>30°C)' if x >= 30 else (' | 低温 (<10°C)' if x < 10 else '')
+                )
+
+                corr = _merged['temperature'].corr(_merged['price_yuan_per_jin'])
+                rain_corr = _merged['rainfall_mm'].corr(_merged['price_yuan_per_jin'])
+
+                fig_scatter = go.Figure()
+
+                for label in sorted(_merged['warning'].unique()):
+                    subset = _merged[_merged['warning'] == label]
+                    fig_scatter.add_trace(go.Scatter(
+                        x=subset['temperature'],
+                        y=subset['price_yuan_per_jin'],
+                        mode='markers',
+                        name=label,
+                        marker=dict(
+                            size=subset['size_scaled'],
+                            opacity=0.75,
+                            line=dict(width=0.5, color='white')
+                        ),
+                        text=[
+                            f"日期: {d.strftime('%Y-%m-%d')}<br>"
+                            f"价格: {p:.1f} 元/斤<br>"
+                            f"气温: {t:.1f}°C<br>"
+                            f"降雨: {r:.1f}mm<br>"
+                            f"交易量: {v:.1f}吨"
+                            for d, p, t, r, v in zip(
+                                subset['date'],
+                                subset['price_yuan_per_jin'],
+                                subset['temperature'],
+                                subset['rainfall_mm'],
+                                subset['volume_ton']
+                            )
+                        ],
+                        hoverinfo='text+name'
+                    ))
+
+                z = np.polyfit(_merged['temperature'], _merged['price_yuan_per_jin'], 1)
+                p_func = np.poly1d(z)
+                x_trend = np.linspace(
+                    _merged['temperature'].min() - 1,
+                    _merged['temperature'].max() + 1,
+                    100
+                )
+                fig_scatter.add_trace(go.Scatter(
+                    x=x_trend,
+                    y=p_func(x_trend),
+                    mode='lines',
+                    name=f'趋势线 (斜率={z[0]:.2f})',
+                    line=dict(color='#92400e', width=2, dash='dash'),
+                    hoverinfo='skip'
+                ))
+
+                _loc_label = weather_location if weather_location != '全部' else '全部产区'
+                fig_scatter.update_layout(
+                    title=f'{selected_variety} · {_loc_label} — 气温 vs 价格散点图'
+                          f'<br><span style="font-size:12px;color:#6b7280;">气泡大小=交易量 | 样本: {len(_merged)}天 | '
+                          f'气温相关系数: {corr:+.2f} | 降雨相关系数: {rain_corr:+.2f}</span>',
+                    xaxis_title='日平均气温 (°C)',
+                    yaxis_title='平均价格 (元/斤)',
+                    height=480,
+                    template='plotly_white',
+                    legend=dict(
+                        orientation="h",
+                        yanchor="bottom",
+                        y=1.02,
+                        xanchor="left",
+                        x=0,
+                        font=dict(size=11)
+                    ),
+                    hovermode='closest'
+                )
+                st.plotly_chart(fig_scatter, width='stretch')
+            else:
+                st.warning(f"⚠️ 样本不足 ({len(_merged)}天 < 5天)，无法绘制相关性散点图")
+        else:
+            st.warning(f"⚠️ 当前范围无 {selected_variety} 交易数据")
+
+    with corr_col2:
+        st.markdown("#### 📊 相关性解读")
+        if len(_tr_for_corr) > 0 and len(_merged) >= 5:
+            if corr > 0.6:
+                strength = "强正相关 ⬆️"
+                meaning = "气温升高时价格明显上涨，可能是春茶季采前升温预期"
+            elif corr > 0.3:
+                strength = "弱正相关 ↗️"
+                meaning = "气温与价格呈一定同步趋势"
+            elif corr > -0.3:
+                strength = "几乎无关 ➡️"
+                meaning = "气温对价格的影响不显著，市场供需为主导"
+            elif corr > -0.6:
+                strength = "弱负相关 ↘️"
+                meaning = "气温升高时价格略有下降，可能是高温影响茶叶品质"
+            else:
+                strength = "强负相关 ⬇️"
+                meaning = "气温升高显著压制价格，警惕高温风险"
+
+            if rain_corr > 0.5:
+                rain_meaning = "降雨充沛时价格走高（优质春茶季常见）"
+            elif rain_corr < -0.5:
+                rain_meaning = "过多降雨拉低价格（洪涝风险预警）"
+            else:
+                rain_meaning = "降雨量对价格影响有限"
+
+            st.markdown(f"""
+            | 指标 | 值 |
+            |------|----|
+            | **气温相关** | `{corr:+.3f}` |
+            | **降雨相关** | `{rain_corr:+.3f}` |
+            | **样本天数** | {len(_merged)} 天 |
+
+            **🌡️ 气温影响**  
+            **{strength}**  
+            {meaning}
+
+            **💧 降雨影响**  
+            {rain_meaning}
+
+            <small>💡 相关系数绝对值越大（0~1），影响越显著</small>
+            """, unsafe_allow_html=True)
+        else:
+            st.info("请选择足够日期范围以生成相关性分析")
 
     st.markdown("---")
     st.subheader("各产区天气预警统计")
