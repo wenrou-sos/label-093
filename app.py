@@ -82,8 +82,18 @@ def load_data():
 trading_df, weather_df = load_data()
 
 
-if 'active_tab' not in st.session_state:
-    st.session_state['active_tab'] = 0
+_tab_config = [
+    ("📈 价格趋势分析", "price"),
+    ("🏪 市场分布", "market"),
+    ("🌸 明前/雨前对比", "mingqian"),
+    ("🌤️ 天气影响分析", "weather"),
+    ("📊 数据总览", "overview"),
+]
+_tab_titles = [t for t, _ in _tab_config]
+_tab_keys = [k for _, k in _tab_config]
+
+if 'active_tab_idx' not in st.session_state:
+    st.session_state['active_tab_idx'] = 0
 if 'weather_focus_date' not in st.session_state:
     st.session_state['weather_focus_date'] = None
 if 'weather_focus_market' not in st.session_state:
@@ -96,7 +106,28 @@ def _jump_to_price_tab(focus_date, focus_market, window_days=14):
     st.session_state['weather_focus_date'] = pd.Timestamp(focus_date)
     st.session_state['weather_focus_market'] = focus_market
     st.session_state['weather_focus_window'] = window_days
-    st.session_state['active_tab'] = 0
+    st.session_state['active_tab_idx'] = 0
+
+
+_default_market_list = ['全部'] + sorted(trading_df['market'].unique())
+_default_sd = trading_df['date'].max() - timedelta(days=90)
+_default_ed = trading_df['date'].max()
+
+_focus_msg = None
+_effective_market = '全部'
+_effective_sd = _default_sd
+_effective_ed = _default_ed
+if st.session_state['weather_focus_date'] is not None:
+    _fd = st.session_state['weather_focus_date']
+    _win = st.session_state['weather_focus_window']
+    _effective_sd = _fd - timedelta(days=_win)
+    _effective_ed = _fd + timedelta(days=_win)
+    _market = st.session_state['weather_focus_market']
+    if _market and _market in _default_market_list:
+        _effective_market = _market
+    _focus_msg = f"🔍 天气联动视角：围绕 {_fd.strftime('%Y-%m-%d')} 前后 {_win} 天" \
+                 f"（{_effective_sd.strftime('%m-%d')} ~ {_effective_ed.strftime('%m-%d')}）" \
+                 f"{' · 产区: ' + _effective_market if _effective_market != '全部' else ''}"
 
 
 with st.sidebar:
@@ -110,32 +141,22 @@ with st.sidebar:
         index=all_varieties.index('龙井') if '龙井' in all_varieties else 0
     )
 
-    all_markets = ['全部'] + sorted(trading_df['market'].unique())
-    selected_market = st.selectbox("选择交易市场", all_markets)
+    all_markets = _default_market_list
+    selected_market = st.selectbox(
+        "选择交易市场",
+        all_markets,
+        index=all_markets.index(_effective_market) if _effective_market in all_markets else 0
+    )
 
     date_range = st.date_input(
         "选择日期范围",
-        value=[trading_df['date'].max() - timedelta(days=90), trading_df['date'].max()],
+        value=[_effective_sd, _effective_ed],
         min_value=trading_df['date'].min(),
         max_value=trading_df['date'].max()
     )
 
     st.markdown("---")
     st.caption(f"数据更新时间: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
-
-_focus_msg = None
-if st.session_state['weather_focus_date'] is not None:
-    _fd = st.session_state['weather_focus_date']
-    _win = st.session_state['weather_focus_window']
-    _sd = _fd - timedelta(days=_win)
-    _ed = _fd + timedelta(days=_win)
-    _market = st.session_state['weather_focus_market']
-    if _market and _market != '全部':
-        selected_market = _market if _market in all_markets else '全部'
-    date_range = (_sd.date(), _ed.date())
-    _focus_msg = f"🔍 天气联动视角：围绕 {_fd.strftime('%Y-%m-%d')} 前后 {_win} 天" \
-                 f"（{_sd.strftime('%m-%d')} ~ {_ed.strftime('%m-%d')}）" \
-                 f"{' · 产区: ' + _market if _market and _market != '全部' else ''}"
 
 if selected_market != '全部':
     trading_filtered = trading_df[trading_df['market'] == selected_market]
@@ -194,16 +215,25 @@ if _focus_msg:
 
 st.markdown("---")
 
-_tab_titles = [
-    "📈 价格趋势分析",
-    "🏪 市场分布",
-    "🌸 明前/雨前对比",
-    "🌤️ 天气影响分析",
-    "📊 数据总览"
-]
-tab1, tab2, tab3, tab4, tab5 = st.tabs(_tab_titles)
 
-with tab1:
+def _on_tab_change():
+    st.session_state['active_tab_idx'] = _tab_titles.index(st.session_state['_tab_radio'])
+
+
+_tab_selected_idx = st.session_state.get('active_tab_idx', 0)
+st.radio(
+    "功能模块",
+    options=_tab_titles,
+    index=_tab_selected_idx,
+    horizontal=True,
+    key='_tab_radio',
+    on_change=_on_tab_change,
+    label_visibility='collapsed'
+)
+active_idx = st.session_state['active_tab_idx']
+
+
+if active_idx == 0:
     st.header(f"{selected_variety} - 价格趋势分析")
 
     period_options = {"近30天": 30, "近90天": 90, "近一年": 365}
@@ -450,7 +480,7 @@ with tab1:
         )
         st.plotly_chart(fig_compare, width='stretch')
 
-with tab2:
+elif active_idx == 1:
     st.header("市场分布可视化")
 
     col_pie, col_bar = st.columns(2)
@@ -573,7 +603,7 @@ with tab2:
     )
     st.plotly_chart(fig_timeline, width='stretch')
 
-with tab3:
+elif active_idx == 2:
     st.header("明前茶 vs 雨前茶 价格对比分析")
 
     col_select, _ = st.columns([1, 3])
@@ -721,7 +751,7 @@ with tab3:
         )
         st.plotly_chart(fig_heatmap, width='stretch')
 
-with tab4:
+elif active_idx == 3:
     st.header("产区天气影响分析")
 
     weather_location = st.selectbox(
@@ -1053,7 +1083,7 @@ with tab4:
     - **持续高温**：加速茶叶老化，影响茶叶口感和香气
     """)
 
-with tab5:
+elif active_idx == 4:
     st.header("📊 数据总览")
 
     st.subheader("整体交易趋势")
