@@ -758,8 +758,7 @@ elif active_idx == 1:
                     reversescale=False,
                     showscale=True,
                     colorbar=dict(
-                        title="周排名",
-                        titleside="right",
+                        title=dict(text="周排名", side="right"),
                         len=0.75
                     ),
                     xgap=3,
@@ -845,9 +844,8 @@ elif active_idx == 1:
                     detail_df = pd.DataFrame(detail_data)
                     st.dataframe(
                         detail_df,
-                        width='stretch',
                         hide_index=True,
-                        use_container_width=True
+                        width='stretch'
                     )
 
     except Exception as e:
@@ -1184,7 +1182,7 @@ elif active_idx == 3:
                         f"📈 跳转查看价格影响",
                         key=btn_key,
                         type="secondary",
-                        use_container_width=True,
+                        width='stretch',
                         on_click=partial(_jump_to_price_tab, row['date'], _market, 14)
                     )
         else:
@@ -1431,8 +1429,7 @@ elif active_idx == 4:
         display_df['日期'] = display_df['日期'].dt.strftime('%Y-%m-%d')
 
         st.dataframe(
-            display_df.sort_values('日期', ascending=False).head(100),
-            width='stretch',
+            display_df.sort_values('日期', ascending=False).head(100),width='stretch',
             hide_index=True
         )
 
@@ -1441,8 +1438,7 @@ elif active_idx == 4:
         market_summary = get_market_summary(trading_filtered)
         market_summary.columns = ['交易市场', '总交易量(吨)', '平均价格(元/斤)']
         st.dataframe(
-            market_summary,
-            width='stretch',
+            market_summary,width='stretch',
             hide_index=True
         )
 
@@ -1451,8 +1447,7 @@ elif active_idx == 4:
         variety_summary = get_variety_summary(trading_filtered)
         variety_summary.columns = ['茶叶品种', '总交易量(吨)', '平均价格(元/斤)']
         st.dataframe(
-            variety_summary.head(20),
-            width='stretch',
+            variety_summary.head(20),width='stretch',
             hide_index=True
         )
 
