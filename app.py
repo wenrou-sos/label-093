@@ -559,8 +559,8 @@ elif active_idx == 1:
         with st.spinner("加载周度排名数据..."):
             rank_df, week_labels = get_weekly_variety_rankings(trading_filtered, num_weeks=6, top_n=10)
 
-        if len(rank_df) == 0 or len(week_labels) == 0:
-            st.warning("⚠️ 周度数据不足，无法展示排名变化趋势")
+        if len(rank_df) == 0 or len(week_labels) < 4:
+            st.warning("⚠️ 周度数据不足（需至少4周完整周数据），无法展示排名变化趋势")
         else:
             col_sort_ctrl, col_view_ctrl, _ = st.columns([1, 1, 3])
             with col_sort_ctrl:
@@ -587,9 +587,15 @@ elif active_idx == 1:
             if sort_option == "按当前排名":
                 sorted_df = rank_df.copy()
             elif sort_option == "按变化幅度升序（上升→下降）":
-                sorted_df = rank_df.sort_values('rank_change', ascending=False).reset_index(drop=True)
+                sorted_df = rank_df.sort_values(
+                    ['rank_change_abs', 'rank_change'],
+                    ascending=[True, False]
+                ).reset_index(drop=True)
             else:
-                sorted_df = rank_df.sort_values('rank_change', ascending=True).reset_index(drop=True)
+                sorted_df = rank_df.sort_values(
+                    ['rank_change_abs', 'rank_change'],
+                    ascending=[False, True]
+                ).reset_index(drop=True)
 
             total_weeks = len(week_keys)
 
@@ -699,7 +705,7 @@ elif active_idx == 1:
                             text_row.append(f"#{rk_int}")
                             hover_row.append(f"排名: 第{rk_int}名<br>交易量: {vol_val:,.1f}吨")
                         else:
-                            z_row.append(None)
+                            z_row.append(float('nan'))
                             text_row.append("—")
                             hover_row.append("无交易数据")
                     z_data.append(z_row)
@@ -760,32 +766,18 @@ elif active_idx == 1:
                     ygap=3
                 ))
 
-                for vi, vname in enumerate(variety_names):
-                    rc = int(sorted_df.iloc[vi].get('rank_change', 0))
-                    if rc >= 3:
-                        rc_color = "#16a34a"
-                    elif rc >= 1:
-                        rc_color = "#22c55e"
-                    elif rc == 0:
-                        rc_color = "#6b7280"
-                    elif rc >= -2:
-                        rc_color = "#f97316"
-                    else:
-                        rc_color = "#dc2626"
-                    rc_weight = "bold" if abs(rc) >= 3 else "normal"
-
-                fig_heatmap.update_layout(
-                    title=f'TOP{len(variety_names)}品种 · 周度排名热力图 '
-                          f'（{week_display_names[0]} 至 {week_display_names[-1]}）',
-                    xaxis_title="周次（周一~周日）",
-                    yaxis_title="茶叶品种",
-                    height=max(420, 52 * len(variety_names) + 120),
-                    template='plotly_white',
-                    xaxis=dict(side="top"),
-                    margin=dict(l=20, r=110, t=120, b=60)
-                )
-
                 rc_annotations = []
+                rc_annotations.append(dict(
+                    x=1.02,
+                    y=1.08,
+                    xref="paper",
+                    yref="paper",
+                    xanchor="center",
+                    text="<b>较上周</b>",
+                    showarrow=False,
+                    font=dict(color="#78350f", size=13),
+                    align="center"
+                ))
                 for vi, vname in enumerate(variety_names):
                     rc_val = int(sorted_df.iloc[vi].get('rank_change', 0))
                     rc_txt = rc_texts[vi]
@@ -814,19 +806,17 @@ elif active_idx == 1:
                         align="center"
                     ))
 
-                fig_heatmap.add_annotation(dict(
-                    x=1.02,
-                    y=1.08,
-                    xref="paper",
-                    yref="paper",
-                    xanchor="center",
-                    text="<b>较上周</b>",
-                    showarrow=False,
-                    font=dict(color="#78350f", size=13),
-                    align="center"
-                ))
-
-                fig_heatmap.update_layout(annotations=rc_annotations)
+                fig_heatmap.update_layout(
+                    title=f'TOP{len(variety_names)}品种 · 周度排名热力图 '
+                          f'（{week_display_names[0]} 至 {week_display_names[-1]}）',
+                    xaxis_title="周次（周一~周日）",
+                    yaxis_title="茶叶品种",
+                    height=max(420, 52 * len(variety_names) + 120),
+                    template='plotly_white',
+                    xaxis=dict(side="top"),
+                    margin=dict(l=20, r=110, t=120, b=60),
+                    annotations=rc_annotations
+                )
 
                 st.plotly_chart(fig_heatmap, width='stretch')
 

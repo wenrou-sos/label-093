@@ -245,7 +245,18 @@ def get_weekly_variety_rankings(df, num_weeks=6, top_n=10):
     if len(available_weeks) < 2:
         return pd.DataFrame(), []
 
-    selected_weeks = available_weeks[:num_weeks]
+    data_max_date = df['date'].max()
+    filtered_weeks = []
+    for yw_item in available_weeks:
+        yr, wk = yw_item[0], yw_item[1]
+        week_end = datetime.fromisocalendar(int(yr), int(wk), 7)
+        if data_max_date >= pd.Timestamp(week_end):
+            filtered_weeks.append(yw_item)
+
+    if len(filtered_weeks) < 2:
+        return pd.DataFrame(), []
+
+    selected_weeks = filtered_weeks[:num_weeks]
     selected_weeks = sorted(selected_weeks, key=lambda x: (x[0], x[1]))
     selected_year_weeks = [w[2] for w in selected_weeks]
 
