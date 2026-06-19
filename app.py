@@ -19,7 +19,8 @@ from data_loader import (
     compare_mingqian_yuqian,
     get_weather_warnings,
     get_market_volume_distribution,
-    get_daily_summary
+    get_daily_summary,
+    get_weekly_variety_rankings
 )
 
 st.set_page_config(
@@ -550,6 +551,318 @@ elif active_idx == 1:
         coloraxis_colorbar=dict(title="均价(元/斤)")
     )
     st.plotly_chart(fig_variety, width='stretch')
+
+    st.markdown("---")
+    st.subheader("📊 品种周度排名变化趋势")
+
+    try:
+        with st.spinner("加载周度排名数据..."):
+            rank_df, week_labels = get_weekly_variety_rankings(trading_filtered, num_weeks=6, top_n=10)
+
+        if len(rank_df) == 0 or len(week_labels) == 0:
+            st.warning("⚠️ 周度数据不足，无法展示排名变化趋势")
+        else:
+            col_sort_ctrl, col_view_ctrl, _ = st.columns([1, 1, 3])
+            with col_sort_ctrl:
+                sort_option = st.selectbox(
+                    "排序方式",
+                    options=[
+                        "按当前排名",
+                        "按变化幅度升序（上升→下降）",
+                        "按变化幅度降序（下降→上升）"
+                    ],
+                    key='rank_sort_option'
+                )
+            with col_view_ctrl:
+                view_mode = st.radio(
+                    "展示模式",
+                    options=["🔢 排名表格", "🔥 热力图"],
+                    horizontal=True,
+                    key='rank_view_mode'
+                )
+
+            week_keys = [wl['key'] for wl in week_labels]
+            week_display_names = [wl['display'] for wl in week_labels]
+
+            if sort_option == "按当前排名":
+                sorted_df = rank_df.copy()
+            elif sort_option == "按变化幅度升序（上升→下降）":
+                sorted_df = rank_df.sort_values('rank_change', ascending=False).reset_index(drop=True)
+            else:
+                sorted_df = rank_df.sort_values('rank_change', ascending=True).reset_index(drop=True)
+
+            total_weeks = len(week_keys)
+
+            if view_mode == "🔢 排名表格":
+                def _get_change_style(change_val):
+                    if change_val >= 3:
+                        return ("↑", str(change_val), "color: #16a34a; font-weight: bold;")
+                    elif change_val >= 1:
+                        return ("↑", str(change_val), "color: #22c55e;")
+                    elif change_val == 0:
+                        return ("-", "", "color: #6b7280;")
+                    elif change_val >= -2:
+                        return ("↓", str(abs(change_val)), "color: #f97316;")
+                    else:
+                        return ("↓", str(abs(change_val)), "color: #dc2626; font-weight: bold;")
+
+                header_html = """
+                <div style="display:flex; gap:4px; margin-bottom:8px; padding:10px 12px; 
+                            background-color:#fef3c7; border-radius:8px; font-weight:600; 
+                            color:#92400e; font-size:14px; border:1px solid #fde68a;">
+                """
+                header_html += '<div style="flex:1.2; min-width:80px;">品种</div>'
+                for wd in week_display_names:
+                    header_html += f'<div style="flex:0.8; min-width:60px; text-align:center;">第{wd}</div>'
+                header_html += '<div style="flex:1; min-width:90px; text-align:center;">排名变化</div>'
+                header_html += "</div>"
+
+                rows_html = ""
+                for _, rrow in sorted_df.iterrows():
+                    variety = rrow['variety']
+                    rc = int(rrow.get('rank_change', 0))
+                    arrow, num, style = _get_change_style(rc)
+
+                    row_html = """
+                    <div style="display:flex; gap:4px; margin-bottom:4px; padding:8px 12px; 
+                                background-color:#ffffff; border-radius:8px; font-size:14px;
+                                border:1px solid #f3f4f6; align-items:center;">
+                    """
+                    row_html += f'<div style="flex:1.2; min-width:80px; font-weight:500; color:#78350f;">{variety}</div>'
+
+                    for wi, wk in enumerate(week_keys):
+                        rk = rrow.get(f'{wk}_rank')
+                        vol_val = rrow.get(f'{wk}_volume', 0)
+                        if rk is not None and not pd.isna(rk):
+                            rk_int = int(rk)
+                            badge_bg = "#fef3c7" if rk_int <= 3 else ("#f3f4f6" if rk_int <= 7 else "#fafaf9")
+                            badge_color = "#92400e" if rk_int <= 3 else "#374151"
+                            tooltip_title = f"周排名: 第{rk_int}名&#10;交易量: {vol_val:,.1f}吨"
+                            rank_cell = (
+                                f'<div style="flex:0.8; min-width:60px; text-align:center;" title="{tooltip_title}">'
+                                f'<span style="display:inline-block; padding:3px 8px; background-color:{badge_bg}; '
+                                f'color:{badge_color}; border-radius:12px; font-weight:600; font-size:13px;">#{rk_int}</span>'
+                                f'</div>'
+                            )
+                        else:
+                            rank_cell = (
+                                f'<div style="flex:0.8; min-width:60px; text-align:center;" title="无交易数据">'
+                                f'<span style="color:#d1d5db;">—</span>'
+                                f'</div>'
+                            )
+                        row_html += rank_cell
+
+                    change_display = f"{arrow}{num}" if num else arrow
+                    row_html += (
+                        f'<div style="flex:1; min-width:90px; text-align:center; {style} font-size:15px;">'
+                        f'{change_display}'
+                        f'</div>'
+                    )
+
+                    row_html += "</div>"
+                    rows_html += row_html
+
+                legend_html = """
+                <div style="margin-top:12px; padding:10px 12px; background-color:#fafaf9; 
+                            border-radius:8px; font-size:12px; color:#6b7280; 
+                            display:flex; gap:16px; flex-wrap:wrap; border:1px solid #f3f4f6;">
+                    <span>💡 <strong>图例：</strong></span>
+                    <span style="color:#16a34a; font-weight:600;">↑≥3 大幅上升</span>
+                    <span style="color:#22c55e;">↑1-2 轻微上升</span>
+                    <span style="color:#6b7280;">- 无变化</span>
+                    <span style="color:#f97316;">↓1-2 轻微下降</span>
+                    <span style="color:#dc2626; font-weight:600;">↓≥3 大幅下降</span>
+                </div>
+                """
+
+                st.markdown(header_html + rows_html + legend_html, unsafe_allow_html=True)
+
+            else:
+                z_data = []
+                text_data = []
+                hover_data = []
+                variety_names = sorted_df['variety'].tolist()
+
+                max_rank_change = sorted_df['rank_change_abs'].max()
+                max_rank_change = max(max_rank_change, 1)
+
+                for _, rrow in sorted_df.iterrows():
+                    z_row = []
+                    text_row = []
+                    hover_row = []
+                    for wk in week_keys:
+                        rk = rrow.get(f'{wk}_rank')
+                        vol_val = rrow.get(f'{wk}_volume', 0)
+                        if rk is not None and not pd.isna(rk):
+                            rk_int = int(rk)
+                            z_row.append(rk_int)
+                            text_row.append(f"#{rk_int}")
+                            hover_row.append(f"排名: 第{rk_int}名<br>交易量: {vol_val:,.1f}吨")
+                        else:
+                            z_row.append(None)
+                            text_row.append("—")
+                            hover_row.append("无交易数据")
+                    z_data.append(z_row)
+                    text_data.append(text_row)
+                    hover_data.append(hover_row)
+
+                rc_colors = []
+                rc_texts = []
+                for _, rrow in sorted_df.iterrows():
+                    rc = int(rrow.get('rank_change', 0))
+                    if rc >= 3:
+                        rc_colors.append(0.12)
+                        rc_texts.append(f"↑{rc}")
+                    elif rc >= 1:
+                        rc_colors.append(0.06)
+                        rc_texts.append(f"↑{rc}")
+                    elif rc == 0:
+                        rc_colors.append(0)
+                        rc_texts.append("-")
+                    elif rc >= -2:
+                        rc_colors.append(-0.06)
+                        rc_texts.append(f"↓{abs(rc)}")
+                    else:
+                        rc_colors.append(-0.12)
+                        rc_texts.append(f"↓{abs(rc)}")
+
+                fig_heatmap = go.Figure()
+
+                from plotly.colors import colorscale_to_colors, make_colorscale
+                rank_cs = [
+                    [0.0, '#16a34a'],
+                    [0.25, '#86efac'],
+                    [0.5, '#f9fafb'],
+                    [0.75, '#fca5a5'],
+                    [1.0, '#dc2626']
+                ]
+
+                fig_heatmap.add_trace(go.Heatmap(
+                    z=z_data,
+                    x=week_display_names,
+                    y=variety_names,
+                    text=text_data,
+                    texttemplate="%{text}",
+                    hovertemplate=
+                        "<b>%{y}</b><br>" +
+                        "周: %{x}<br>" +
+                        "%{customdata}<extra></extra>",
+                    customdata=hover_data,
+                    colorscale=rank_cs,
+                    reversescale=False,
+                    showscale=True,
+                    colorbar=dict(
+                        title="周排名",
+                        titleside="right",
+                        len=0.75
+                    ),
+                    xgap=3,
+                    ygap=3
+                ))
+
+                for vi, vname in enumerate(variety_names):
+                    rc = int(sorted_df.iloc[vi].get('rank_change', 0))
+                    if rc >= 3:
+                        rc_color = "#16a34a"
+                    elif rc >= 1:
+                        rc_color = "#22c55e"
+                    elif rc == 0:
+                        rc_color = "#6b7280"
+                    elif rc >= -2:
+                        rc_color = "#f97316"
+                    else:
+                        rc_color = "#dc2626"
+                    rc_weight = "bold" if abs(rc) >= 3 else "normal"
+
+                fig_heatmap.update_layout(
+                    title=f'TOP{len(variety_names)}品种 · 周度排名热力图 '
+                          f'（{week_display_names[0]} 至 {week_display_names[-1]}）',
+                    xaxis_title="周次（周一~周日）",
+                    yaxis_title="茶叶品种",
+                    height=max(420, 52 * len(variety_names) + 120),
+                    template='plotly_white',
+                    xaxis=dict(side="top"),
+                    margin=dict(l=20, r=110, t=120, b=60)
+                )
+
+                rc_annotations = []
+                for vi, vname in enumerate(variety_names):
+                    rc_val = int(sorted_df.iloc[vi].get('rank_change', 0))
+                    rc_txt = rc_texts[vi]
+                    if rc_val >= 3:
+                        rc_fg = "#16a34a"
+                    elif rc_val >= 1:
+                        rc_fg = "#22c55e"
+                    elif rc_val == 0:
+                        rc_fg = "#6b7280"
+                    elif rc_val >= -2:
+                        rc_fg = "#f97316"
+                    else:
+                        rc_fg = "#dc2626"
+                    rc_bold = True if abs(rc_val) >= 3 else False
+
+                    rc_annotations.append(dict(
+                        x=1.02,
+                        y=vi,
+                        xref="paper",
+                        yref="y",
+                        xanchor="left",
+                        text=f"<b>{rc_txt}</b>" if rc_bold else rc_txt,
+                        showarrow=False,
+                        font=dict(color=rc_fg, size=14,
+                                  family="Arial, sans-serif"),
+                        align="center"
+                    ))
+
+                fig_heatmap.add_annotation(dict(
+                    x=1.02,
+                    y=1.08,
+                    xref="paper",
+                    yref="paper",
+                    xanchor="center",
+                    text="<b>较上周</b>",
+                    showarrow=False,
+                    font=dict(color="#78350f", size=13),
+                    align="center"
+                ))
+
+                fig_heatmap.update_layout(annotations=rc_annotations)
+
+                st.plotly_chart(fig_heatmap, width='stretch')
+
+                with st.expander("📋 查看详细排名数据表格", expanded=False):
+                    detail_data = []
+                    for _, rrow in sorted_df.iterrows():
+                        drow = {"品种": rrow['variety']}
+                        for wi, wk in enumerate(week_keys):
+                            wname = week_display_names[wi]
+                            rk = rrow.get(f'{wk}_rank')
+                            vol_val = rrow.get(f'{wk}_volume', 0)
+                            if rk is not None and not pd.isna(rk):
+                                drow[f'{wname} 排名'] = f"#{int(rk)}"
+                                drow[f'{wname} 交易量(吨)'] = round(vol_val, 1)
+                            else:
+                                drow[f'{wname} 排名'] = "—"
+                                drow[f'{wname} 交易量(吨)'] = 0.0
+                        rc = int(rrow.get('rank_change', 0))
+                        if rc > 0:
+                            drow['较上周变化'] = f"↑{rc}"
+                        elif rc < 0:
+                            drow['较上周变化'] = f"↓{abs(rc)}"
+                        else:
+                            drow['较上周变化'] = "-"
+                        detail_data.append(drow)
+                    detail_df = pd.DataFrame(detail_data)
+                    st.dataframe(
+                        detail_df,
+                        width='stretch',
+                        hide_index=True,
+                        use_container_width=True
+                    )
+
+    except Exception as e:
+        st.error(f"❌ 加载排名变化数据时出现错误：{str(e)}")
+        st.caption("请尝试调整侧边栏筛选条件后重试")
 
     st.markdown("---")
     st.subheader("茶叶上市时间轴")

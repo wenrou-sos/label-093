@@ -220,3 +220,93 @@ def get_season_ranges_for_years(years):
             except (ValueError, TypeError):
                 pass
     return result
+
+
+def get_weekly_variety_rankings(df, num_weeks=6, top_n=10):
+    if len(df) < 1:
+        return pd.DataFrame(), []
+
+    df = df.copy()
+    df['week'] = df['date'].dt.isocalendar().week
+    df['year'] = df['date'].dt.isocalendar().year
+    df['year_week'] = df['year'].astype(str) + '-W' + df['week'].astype(str).str.zfill(2)
+
+    weekly = df.groupby(['year_week', 'year', 'week', 'variety']).agg({
+        'volume_ton': 'sum'
+    }).reset_index()
+
+    weekly_sorted = weekly.sort_values(['year', 'week'], ascending=False)
+    available_weeks = sorted(
+        weekly_sorted[['year', 'week', 'year_week']].drop_duplicates().values.tolist(),
+        key=lambda x: (x[0], x[1]),
+        reverse=True
+    )
+
+    if len(available_weeks) < 2:
+        return pd.DataFrame(), []
+
+    selected_weeks = available_weeks[:num_weeks]
+    selected_weeks = sorted(selected_weeks, key=lambda x: (x[0], x[1]))
+    selected_year_weeks = [w[2] for w in selected_weeks]
+
+    weekly_filtered = weekly[weekly['year_week'].isin(selected_year_weeks)]
+
+    latest_week_label = selected_year_weeks[-1]
+    latest_week_data = weekly_filtered[weekly_filtered['year_week'] == latest_week_label]
+    latest_week_ranked = latest_week_data.sort_values('volume_ton', ascending=False).head(top_n)
+    top_varieties = latest_week_ranked['variety'].tolist()
+
+    ranking_rows = []
+    for _, row in latest_week_ranked.iterrows():
+        variety = row['variety']
+        ranking_row = {'variety': variety}
+
+        for yw in selected_year_weeks:
+            week_data = weekly_filtered[
+                (weekly_filtered['year_week'] == yw) &
+                (weekly_filtered['variety'] == variety)
+            ]
+            if len(week_data) > 0:
+                week_volume = week_data['volume_ton'].values[0]
+                all_in_week = weekly_filtered[weekly_filtered['year_week'] == yw]
+                all_in_week_ranked = all_in_week.sort_values('volume_ton', ascending=False)
+                all_in_week_ranked = all_in_week_ranked.reset_index(drop=True)
+                rank = all_in_week_ranked[all_in_week_ranked['variety'] == variety].index[0] + 1
+                ranking_row[f'{yw}_rank'] = int(rank)
+                ranking_row[f'{yw}_volume'] = float(week_volume)
+            else:
+                ranking_row[f'{yw}_rank'] = None
+                ranking_row[f'{yw}_volume'] = 0.0
+
+        if len(selected_year_weeks) >= 2:
+            prev_rank = ranking_row.get(f'{selected_year_weeks[-2]}_rank')
+            curr_rank = ranking_row.get(f'{selected_year_weeks[-1]}_rank')
+            if prev_rank is not None and curr_rank is not None:
+                rank_change = prev_rank - curr_rank
+                ranking_row['rank_change'] = int(rank_change)
+                ranking_row['rank_change_abs'] = abs(int(rank_change))
+            else:
+                ranking_row['rank_change'] = 0
+                ranking_row['rank_change_abs'] = 0
+        else:
+            ranking_row['rank_change'] = 0
+            ranking_row['rank_change_abs'] = 0
+
+        ranking_rows.append(ranking_row)
+
+    result_df = pd.DataFrame(ranking_rows)
+
+    week_labels = []
+    for yw in selected_year_weeks:
+        parts = yw.split('-W')
+        yr, wk = int(parts[0]), int(parts[1])
+        monday = datetime.fromisocalendar(yr, wk, 1)
+        sunday = datetime.fromisocalendar(yr, wk, 7)
+        week_labels.append({
+            'key': yw,
+            'display': f"{monday.strftime('%m/%d')}-{sunday.strftime('%m/%d')}",
+            'start': monday,
+            'end': sunday
+        })
+
+    return result_df, week_labels
